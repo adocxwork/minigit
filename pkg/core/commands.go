@@ -106,6 +106,58 @@ func CreateCommit(repoRoot, message string, parents []string) error {
 	return nil
 }
 
+func restoreFiles(repoRoot, oldCommitHash, newCommitHash string) error {
+	var oldCommit *Commit
+	if oldCommitHash != "" {
+		oldCommit, _ = ReadCommit(repoRoot, oldCommitHash)
+	}
+	
+	newCommit, err := ReadCommit(repoRoot, newCommitHash)
+	if err != nil {
+		return err
+	}
+
+	// 1. Remove files from the old commit
+	if oldCommit != nil {
+		for file := range oldCommit.Files {
+			os.Remove(filepath.Join(repoRoot, file))
+			dir := filepath.Dir(filepath.Join(repoRoot, file))
+			for dir != repoRoot {
+				os.Remove(dir)
+				dir = filepath.Dir(dir)
+			}
+		}
+	}
+
+	// 2. Write files from new commit
+	idx := &Index{Entries: make(map[string]string)}
+	for relPath, blobHash := range newCommit.Files {
+		absPath := filepath.Join(repoRoot, relPath)
+		if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+			return err
+		}
+
+		blobPath := filepath.Join(repoRoot, MgitDir, "objects", blobHash)
+		src, err := os.Open(blobPath)
+		if err != nil {
+			return err
+		}
+		dst, err := os.Create(absPath)
+		if err != nil {
+			src.Close()
+			return err
+		}
+		io.Copy(dst, src)
+		src.Close()
+		dst.Close()
+
+		idx.Entries[relPath] = blobHash
+	}
+
+	// 3. Update index
+	return WriteIndex(repoRoot, idx)
+}
+
 // Checkout switches to a branch or commit, updating the working directory.
 func Checkout(repoRoot, target string) error {
 	// First, determine if target is a branch or a commit hash
@@ -126,57 +178,8 @@ func Checkout(repoRoot, target string) error {
 		}
 	}
 
-	commit, err := ReadCommit(repoRoot, commitHash)
-	if err != nil {
-		return err
-	}
-
-	// 1. Remove files from the current HEAD
 	headCommitHash, _ := GetHEADCommit(repoRoot)
-	if headCommitHash != "" {
-		headCommit, err := ReadCommit(repoRoot, headCommitHash)
-		if err == nil {
-			for file := range headCommit.Files {
-				os.Remove(filepath.Join(repoRoot, file))
-				dir := filepath.Dir(filepath.Join(repoRoot, file))
-				for dir != repoRoot {
-					os.Remove(dir)
-					dir = filepath.Dir(dir)
-				}
-			}
-		}
-	}
-
-	// 2. Write files from target commit
-	idx := &Index{Entries: make(map[string]string)}
-	for relPath, blobHash := range commit.Files {
-		absPath := filepath.Join(repoRoot, relPath)
-		if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
-			return err
-		}
-
-		blobPath := filepath.Join(repoRoot, MgitDir, "objects", blobHash)
-
-		src, err := os.Open(blobPath)
-		if err != nil {
-			return err
-		}
-
-		dst, err := os.Create(absPath)
-		if err != nil {
-			src.Close()
-			return err
-		}
-
-		io.Copy(dst, src)
-		src.Close()
-		dst.Close()
-
-		idx.Entries[relPath] = blobHash
-	}
-
-	// 3. Update index to match the target commit
-	if err := WriteIndex(repoRoot, idx); err != nil {
+	if err := restoreFiles(repoRoot, headCommitHash, commitHash); err != nil {
 		return err
 	}
 
@@ -414,7 +417,20 @@ func Merge(repoRoot, targetBranch string) error {
 	if ancestor == headHash {
 		// Fast-forward
 		fmt.Println("Fast-forwarding...")
-		return Checkout(repoRoot, targetBranch)
+		if err := restoreFiles(repoRoot, headHash, targetHash); err != nil {
+			return err
+		}
+		
+		currBranch, _ := GetCurrentBranch(repoRoot)
+		if currBranch != "" {
+			if err := UpdateBranch(repoRoot, currBranch, targetHash); err != nil {
+				return err
+			}
+		} else {
+			headPath := filepath.Join(repoRoot, MgitDir, "HEAD")
+			os.WriteFile(headPath, []byte(targetHash+"\n"), 0644)
+		}
+		return nil
 	}
 
 	if ancestor == targetHash {
