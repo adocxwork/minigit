@@ -25,7 +25,13 @@ var commitCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if err := core.CreateCommit(repoRoot, message); err != nil {
+		headHash, _ := core.GetHEADCommit(repoRoot)
+		var parents []string
+		if headHash != "" {
+			parents = []string{headHash}
+		}
+
+		if err := core.CreateCommit(repoRoot, message, parents); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
 		}

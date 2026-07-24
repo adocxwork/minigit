@@ -19,7 +19,7 @@ Objects are the core data units in `mgit`. There are two types of objects:
 * **Blobs**: When a file is added to the staging area (`mgit add`), its contents are hashed using SHA-1. A file is created in the `objects` directory named after this hash, containing the exact contents of the file.
 * **Commits**: When a commit is created (`mgit commit`), a JSON object is generated containing:
   * `ID`: The SHA-1 hash of the commit JSON.
-  * `Parent`: The hash of the previous commit (if any).
+  * `Parents`: An array of parent commit hashes (usually one, but two for merge commits).
   * `Message`: The commit message.
   * `Timestamp`: The time the commit was created.
   * `Files`: A snapshot of the repository, represented as a map of file paths to their respective blob hashes.
@@ -62,5 +62,12 @@ When checking out a target (branch or commit hash):
 4. Updates the `.mgit/index` to match the target commit.
 5. Updates `.mgit/HEAD` to point to the new branch or commit.
 
+### `merge`
+Merges changes from a target branch into the current branch:
+1. Determines the "Best Common Ancestor" commit by traversing the parents of both branches.
+2. If the current HEAD is the ancestor, it performs a **Fast-Forward** merge by pointing HEAD to the target branch.
+3. If the target branch is the ancestor, the branch is already up to date.
+4. If they have diverged, it performs a **3-Way Merge**, comparing file snapshots across HEAD, the Target branch, and the Ancestor. Files are merged if changed in one branch, but if the exact same file was changed in both branches differently, it safely aborts with a merge conflict error. It then creates a merge commit with multiple parents.
+
 ### `log`
-Reads the `HEAD` file to find the current commit. It then opens the commit JSON, prints its details, reads the `Parent` hash, and repeats the process until it reaches the initial commit (which has no parent).
+Reads the `HEAD` file to find the current commit. It then opens the commit JSON, prints its details, reads the first `Parents` hash, and repeats the process until it reaches the initial commit.

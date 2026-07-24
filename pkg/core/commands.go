@@ -59,7 +59,7 @@ func Add(repoRoot, path string) error {
 }
 
 // CreateCommit creates a new commit from the staging area.
-func CreateCommit(repoRoot, message string) error {
+func CreateCommit(repoRoot, message string, parents []string) error {
 	idx, err := ReadIndex(repoRoot)
 	if err != nil {
 		return err
@@ -69,13 +69,8 @@ func CreateCommit(repoRoot, message string) error {
 		return fmt.Errorf("nothing to commit, working tree clean")
 	}
 
-	parentHash, err := GetHEADCommit(repoRoot)
-	if err != nil {
-		return err
-	}
-
 	commit := Commit{
-		Parent:    parentHash,
+		Parents:   parents,
 		Message:   message,
 		Timestamp: time.Now(),
 		Files:     make(map[string]string),
@@ -328,8 +323,186 @@ func Log(repoRoot string) error {
 		fmt.Printf("Date:   %s\n", commit.Timestamp.Format(time.RFC1123Z))
 		fmt.Printf("\n    %s\n\n", commit.Message)
 
-		commitHash = commit.Parent
+		if len(commit.Parents) > 0 {
+			commitHash = commit.Parents[0] // just follow first parent for simple log
+		} else {
+			commitHash = ""
+		}
 	}
 
 	return nil
+}
+
+func getCommitAncestors(repoRoot string, commitHash string) (map[string]bool, error) {
+	ancestors := make(map[string]bool)
+	queue := []string{commitHash}
+	for len(queue) > 0 {
+		curr := queue[0]
+		queue = queue[1:]
+		if ancestors[curr] {
+			continue
+		}
+		ancestors[curr] = true
+		commit, err := ReadCommit(repoRoot, curr)
+		if err == nil {
+			for _, p := range commit.Parents {
+				if p != "" {
+					queue = append(queue, p)
+				}
+			}
+		}
+	}
+	return ancestors, nil
+}
+
+func findCommonAncestor(repoRoot, hash1, hash2 string) (string, error) {
+	ancestors1, err := getCommitAncestors(repoRoot, hash1)
+	if err != nil {
+		return "", err
+	}
+
+	queue := []string{hash2}
+	visited := make(map[string]bool)
+	for len(queue) > 0 {
+		curr := queue[0]
+		queue = queue[1:]
+
+		if visited[curr] {
+			continue
+		}
+		visited[curr] = true
+
+		if ancestors1[curr] {
+			return curr, nil
+		}
+
+		commit, err := ReadCommit(repoRoot, curr)
+		if err == nil {
+			for _, p := range commit.Parents {
+				if p != "" {
+					queue = append(queue, p)
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no common ancestor found")
+}
+
+// Merge merges a target branch into the current branch.
+func Merge(repoRoot, targetBranch string) error {
+	headHash, err := GetHEADCommit(repoRoot)
+	if err != nil {
+		return err
+	}
+
+	targetHash, err := GetBranchCommit(repoRoot, targetBranch)
+	if err != nil {
+		return err
+	}
+
+	if headHash == targetHash {
+		fmt.Println("Already up to date.")
+		return nil
+	}
+
+	ancestor, err := findCommonAncestor(repoRoot, headHash, targetHash)
+	if err != nil {
+		ancestor = ""
+	}
+
+	if ancestor == headHash {
+		// Fast-forward
+		fmt.Println("Fast-forwarding...")
+		return Checkout(repoRoot, targetBranch)
+	}
+
+	if ancestor == targetHash {
+		fmt.Println("Already up to date.")
+		return nil
+	}
+
+	// True merge
+	fmt.Println("Performing 3-way merge...")
+
+	headCommit, err := ReadCommit(repoRoot, headHash)
+	if err != nil {
+		return err
+	}
+
+	targetCommit, err := ReadCommit(repoRoot, targetHash)
+	if err != nil {
+		return err
+	}
+
+	var ancestorFiles map[string]string
+	if ancestor != "" {
+		ancestorCommit, err := ReadCommit(repoRoot, ancestor)
+		if err == nil {
+			ancestorFiles = ancestorCommit.Files
+		}
+	}
+	if ancestorFiles == nil {
+		ancestorFiles = make(map[string]string)
+	}
+
+	mergedFiles := make(map[string]string)
+	allFiles := make(map[string]bool)
+	for f := range headCommit.Files {
+		allFiles[f] = true
+	}
+	for f := range targetCommit.Files {
+		allFiles[f] = true
+	}
+	for f := range ancestorFiles {
+		allFiles[f] = true
+	}
+
+	for f := range allFiles {
+		hHash := headCommit.Files[f]
+		tHash := targetCommit.Files[f]
+		aHash := ancestorFiles[f]
+
+		if hHash == tHash {
+			if hHash != "" {
+				mergedFiles[f] = hHash
+			}
+			continue
+		}
+
+		if hHash == aHash {
+			// Changed in target
+			if tHash != "" {
+				mergedFiles[f] = tHash
+			}
+		} else if tHash == aHash {
+			// Changed in head
+			if hHash != "" {
+				mergedFiles[f] = hHash
+			}
+		} else {
+			// Conflict
+			return fmt.Errorf("CONFLICT (content): Merge conflict in %s", f)
+		}
+	}
+
+	// Write merged files to working tree and index
+	idx := &Index{Entries: mergedFiles}
+	if err := WriteIndex(repoRoot, idx); err != nil {
+		return err
+	}
+
+	for f, blobHash := range mergedFiles {
+		absPath := filepath.Join(repoRoot, f)
+		os.MkdirAll(filepath.Dir(absPath), 0755)
+
+		src, _ := os.Open(filepath.Join(repoRoot, MgitDir, "objects", blobHash))
+		dst, _ := os.Create(absPath)
+		io.Copy(dst, src)
+		src.Close()
+		dst.Close()
+	}
+
+	msg := fmt.Sprintf("Merge branch '%s'", targetBranch)
+	return CreateCommit(repoRoot, msg, []string{headHash, targetHash})
 }

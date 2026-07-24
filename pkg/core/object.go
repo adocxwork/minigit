@@ -13,7 +13,7 @@ import (
 
 type Commit struct {
 	ID        string            `json:"id"`
-	Parent    string            `json:"parent,omitempty"`
+	Parents   []string          `json:"parents,omitempty"`
 	Message   string            `json:"message"`
 	Timestamp time.Time         `json:"timestamp"`
 	Files     map[string]string `json:"files"` // map of filepath to blob hash

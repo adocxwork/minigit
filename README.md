@@ -92,3 +92,6 @@
 
 * `mgit checkout <branch-name|commit-hash>`
   Switch branches or restore working tree files. This will update your files to match the exact state they were in on that branch or commit.
+
+* `mgit merge <branch-name>`
+  Join two or more development histories together. It supports fast-forward merges, up-to-date checks, and 3-way merges (aborting if conflicts arise).
