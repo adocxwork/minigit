@@ -200,23 +200,15 @@ func Checkout(repoRoot, target string) error {
 	return nil
 }
 
-// Status prints the status of the repository.
-func Status(repoRoot string) error {
-	branch, _ := GetCurrentBranch(repoRoot)
-	if branch != "" {
-		fmt.Printf("On branch %s\n", branch)
-	} else {
-		headCommit, _ := GetHEADCommit(repoRoot)
-		if headCommit != "" {
-			fmt.Printf("HEAD detached at %s\n", headCommit[:7])
-		} else {
-			fmt.Println("No commits yet")
-		}
-	}
-
+// GetStatus computes the repository status.
+func GetStatus(repoRoot string) (staged, modified, untracked []string, err error) {
+	staged = []string{}
+	modified = []string{}
+	untracked = []string{}
+	
 	idx, err := ReadIndex(repoRoot)
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 
 	headCommitHash, _ := GetHEADCommit(repoRoot)
@@ -228,7 +220,6 @@ func Status(repoRoot string) error {
 		}
 	}
 
-	// Collect working directory files
 	workDirFiles := make(map[string]string)
 	err = filepath.Walk(repoRoot, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -248,14 +239,9 @@ func Status(repoRoot string) error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 
-	var staged []string
-	var modified []string
-	var untracked []string
-
-	// Check for untracked and modified
 	for file, wdHash := range workDirFiles {
 		idxHash, inIdx := idx.Entries[file]
 		if !inIdx {
@@ -265,7 +251,6 @@ func Status(repoRoot string) error {
 		}
 	}
 
-	// Check for staged
 	for file, idxHash := range idx.Entries {
 		headHash, inHead := headFiles[file]
 		if !inHead || headHash != idxHash {
@@ -276,6 +261,28 @@ func Status(repoRoot string) error {
 	sort.Strings(staged)
 	sort.Strings(modified)
 	sort.Strings(untracked)
+
+	return staged, modified, untracked, nil
+}
+
+// Status prints the status of the repository.
+func Status(repoRoot string) error {
+	branch, _ := GetCurrentBranch(repoRoot)
+	if branch != "" {
+		fmt.Printf("On branch %s\n", branch)
+	} else {
+		headCommit, _ := GetHEADCommit(repoRoot)
+		if headCommit != "" {
+			fmt.Printf("HEAD detached at %s\n", headCommit[:7])
+		} else {
+			fmt.Println("No commits yet")
+		}
+	}
+
+	staged, modified, untracked, err := GetStatus(repoRoot)
+	if err != nil {
+		return err
+	}
 
 	if len(staged) > 0 {
 		fmt.Println("\nChanges to be committed:")
