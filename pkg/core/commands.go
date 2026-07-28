@@ -60,6 +60,23 @@ func Add(repoRoot, path string) error {
 
 // CreateCommit creates a new commit from the staging area.
 func CreateCommit(repoRoot, message string, parents []string) error {
+	mergeHeadPath := filepath.Join(repoRoot, MgitDir, "MERGE_HEAD")
+	if utils.Exists(mergeHeadPath) {
+		content, err := os.ReadFile(mergeHeadPath)
+		if err == nil {
+			mergeHash := strings.TrimSpace(string(content))
+			found := false
+			for _, p := range parents {
+				if p == mergeHash {
+					found = true
+				}
+			}
+			if !found && mergeHash != "" {
+				parents = append(parents, mergeHash)
+			}
+		}
+	}
+
 	idx, err := ReadIndex(repoRoot)
 	if err != nil {
 		return err
@@ -103,6 +120,7 @@ func CreateCommit(repoRoot, message string, parents []string) error {
 	}
 
 	fmt.Printf("[%s] %s\n", commitHash[:7], message)
+	os.Remove(filepath.Join(repoRoot, MgitDir, "MERGE_HEAD"))
 	return nil
 }
 
@@ -138,18 +156,27 @@ func restoreFiles(repoRoot, oldCommitHash, newCommitHash string) error {
 		}
 
 		blobPath := filepath.Join(repoRoot, MgitDir, "objects", blobHash)
-		src, err := os.Open(blobPath)
+		err = func() error {
+			src, err := os.Open(blobPath)
+			if err != nil {
+				return err
+			}
+			defer src.Close()
+
+			dst, err := os.Create(absPath)
+			if err != nil {
+				return err
+			}
+			defer dst.Close()
+
+			if _, err := io.Copy(dst, src); err != nil {
+				return err
+			}
+			return nil
+		}()
 		if err != nil {
 			return err
 		}
-		dst, err := os.Create(absPath)
-		if err != nil {
-			src.Close()
-			return err
-		}
-		io.Copy(dst, src)
-		src.Close()
-		dst.Close()
 
 		idx.Entries[relPath] = blobHash
 	}
@@ -471,6 +498,8 @@ func Merge(repoRoot, targetBranch string) error {
 
 	mergedFiles := make(map[string]string)
 	allFiles := make(map[string]bool)
+	conflictedFiles := make(map[string]bool)
+	hasConflicts := false
 	for f := range headCommit.Files {
 		allFiles[f] = true
 	}
@@ -505,7 +534,34 @@ func Merge(repoRoot, targetBranch string) error {
 			}
 		} else {
 			// Conflict
-			return fmt.Errorf("CONFLICT (content): Merge conflict in %s", f)
+			hasConflicts = true
+			fmt.Printf("CONFLICT (content): Merge conflict in %s\n", f)
+
+			var hContent, tContent []byte
+			if hHash != "" {
+				hContent, _ = os.ReadFile(filepath.Join(repoRoot, MgitDir, "objects", hHash))
+			}
+			if tHash != "" {
+				tContent, _ = os.ReadFile(filepath.Join(repoRoot, MgitDir, "objects", tHash))
+			}
+
+			hStr := string(hContent)
+			if len(hStr) > 0 && hStr[len(hStr)-1] != '\n' {
+				hStr += "\n"
+			}
+			tStr := string(tContent)
+			if len(tStr) > 0 && tStr[len(tStr)-1] != '\n' {
+				tStr += "\n"
+			}
+			conflictContent := fmt.Sprintf("<<<<<<< HEAD\n%s=======\n%s>>>>>>> %s\n", hStr, tStr, targetBranch)
+			absPath := filepath.Join(repoRoot, f)
+			os.MkdirAll(filepath.Dir(absPath), 0755)
+			os.WriteFile(absPath, []byte(conflictContent), 0644)
+
+			if hHash != "" {
+				mergedFiles[f] = hHash
+			}
+			conflictedFiles[f] = true
 		}
 	}
 
@@ -516,6 +572,9 @@ func Merge(repoRoot, targetBranch string) error {
 	}
 
 	for f, blobHash := range mergedFiles {
+		if conflictedFiles[f] {
+			continue // Already written with markers
+		}
 		absPath := filepath.Join(repoRoot, f)
 		os.MkdirAll(filepath.Dir(absPath), 0755)
 
@@ -526,6 +585,60 @@ func Merge(repoRoot, targetBranch string) error {
 		dst.Close()
 	}
 
+	if hasConflicts {
+		mergeHeadPath := filepath.Join(repoRoot, MgitDir, "MERGE_HEAD")
+		os.WriteFile(mergeHeadPath, []byte(targetHash+"\n"), 0644)
+		return fmt.Errorf("Automatic merge failed; fix conflicts and then commit the result")
+	}
+
 	msg := fmt.Sprintf("Merge branch '%s'", targetBranch)
 	return CreateCommit(repoRoot, msg, []string{headHash, targetHash})
+}
+
+// Reset moves the current branch pointer and optionally updates the working tree and index.
+func Reset(repoRoot, mode, target string) error {
+	targetHash := target
+	if utils.Exists(filepath.Join(repoRoot, MgitDir, "refs", "heads", target)) {
+		targetHash, _ = GetBranchCommit(repoRoot, target)
+	} else if !utils.Exists(filepath.Join(repoRoot, MgitDir, "objects", target)) {
+		return fmt.Errorf("fatal: Could not parse object '%s'", target)
+	}
+
+	currentHash, err := GetHEADCommit(repoRoot)
+	if err != nil {
+		return err
+	}
+
+	if mode == "hard" {
+		if err := restoreFiles(repoRoot, currentHash, targetHash); err != nil {
+			return err
+		}
+	} else if mode == "soft" {
+		// Do nothing to working tree or index
+	} else {
+		// Mixed (default) - Update index to match target, leave working tree
+		targetCommit, err := ReadCommit(repoRoot, targetHash)
+		if err != nil {
+			return err
+		}
+		idx := &Index{Entries: targetCommit.Files}
+		if err := WriteIndex(repoRoot, idx); err != nil {
+			return err
+		}
+	}
+
+	branch, _ := GetCurrentBranch(repoRoot)
+	if branch != "" {
+		if err := UpdateBranch(repoRoot, branch, targetHash); err != nil {
+			return err
+		}
+	} else {
+		headPath := filepath.Join(repoRoot, MgitDir, "HEAD")
+		if err := os.WriteFile(headPath, []byte(targetHash+"\n"), 0644); err != nil {
+			return err
+		}
+	}
+
+	fmt.Printf("HEAD is now at %s\n", targetHash[:7])
+	return nil
 }

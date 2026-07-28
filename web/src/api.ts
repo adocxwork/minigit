@@ -82,5 +82,14 @@ export const api = {
       body: JSON.stringify({ targetBranch })
     });
     if (!res.ok) throw new Error(await res.text());
+  },
+
+  reset: async (mode: string, target: string): Promise<void> => {
+    const res = await fetch(`${API_BASE}/reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, target })
+    });
+    if (!res.ok) throw new Error(await res.text());
   }
 };

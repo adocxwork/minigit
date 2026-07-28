@@ -30,6 +30,7 @@ func StartServer(repoRoot, port string) error {
 	mux.HandleFunc("/api/branch", api.handleBranch)
 	mux.HandleFunc("/api/checkout", api.handleCheckout)
 	mux.HandleFunc("/api/merge", api.handleMerge)
+	mux.HandleFunc("/api/reset", api.handleReset)
 
 	// Serve the embedded static frontend
 	if UIAssets != nil {
@@ -216,3 +217,25 @@ func (a *API) handleMerge(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 }
+
+func (a *API) handleReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Mode   string `json:"mode"`
+		Target string `json:"target"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := core.Reset(a.RepoRoot, req.Mode, req.Target); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+

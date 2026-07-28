@@ -1,97 +1,94 @@
-# mgit
+# mgit - The Miniature Version Control System
 
-**mgit** is a minimalist, Git-like version control system written in Go. It provides fundamental tracking, staging, committing, and branching features via a simple command-line interface.
+**mgit** is a lightweight, simplified version control system built purely in Go (Golang). Designed as an educational and functional alternative to Git, it implements core version control concepts from scratch—including content-addressable storage, branching, automated 3-way merges, full merge conflict resolution, and a built-in Web GUI!
 
-## How to setup this tool?
+---
 
-### Prerequisites
-* Go (Golang) installed on your system.
+## Key Features
 
-### Installation Steps
+### 1. Core Version Control
+*   **Initialization**: Run `mgit init` to create a `.mgit` repository.
+*   **Staging**: Run `mgit add <file>` or `mgit add .` to stage files to the index.
+*   **Committing**: Run `mgit commit -m "msg"` to record snapshots permanently.
+*   **History & Status**: Check the state of your working tree with `mgit status` and view your commit timeline with `mgit log`.
 
-1. **Clone or Download the source code**
-   Open your terminal and navigate to the `minigit` project directory.
-   ```bash
-   cd path/to/minigit
-   ```
+### 2. Branching, Merging & History Rewriting
+*   **Branches**: Create and manage isolated streams of work using `mgit branch` and `mgit checkout`.
+*   **Resetting**: Undo commits and changes using `mgit reset [--soft | --mixed | --hard] <commit>`.
+*   **Intelligent 3-Way Merge**: Running `mgit merge <branch>` automatically finds the common ancestor and merges changes.
+*   **Merge Conflict Resolution**: Just like real Git, if a merge conflicts, `mgit` halts, generates standard conflict markers (`<<<<<<< HEAD`, `=======`, `>>>>>>>`), and locks the repository into a `MERGE_HEAD` state. You can manually resolve the files, stage them, and commit to generate a true multi-parent merge commit!
 
-2. **Build the executable**
-   Compile the Go source code into a runnable binary.
-   ```bash
-   go build -o mgit main.go
-   ```
+### 3. Integrated Web GUI (IDE-Style & Reactive)
+*   **Zero Dependencies**: Run `mgit ui` to instantly launch a fully featured Web GUI.
+*   **Reactive Polling**: The UI updates automatically via background polling. Changes you make in your CLI or editor appear in the GUI instantly without manual refreshes!
+*   **Custom Notifications**: All destructive actions (like Hard Resets) are protected by in-app Modals, and alerts are handled by sleek Toast notifications.
+*   **Built-in React**: The modular React frontend is compiled and **embedded** directly inside the Go binary.
 
-3. **Install Globally (Optional but Recommended)**
-   To use `mgit` from any folder on your computer without typing the full path, move the built executable to your system's binaries folder:
-   
-   **On macOS / Linux:**
-   ```bash
-   sudo mv mgit /usr/local/bin/
-   ```
-   *(You can now use the `mgit` command from anywhere).*
+---
 
-## How to use this tool?
+## How to Setup & Build
 
-`mgit` works completely independently from its source code. You use the compiled `mgit` tool to track **other** projects on your computer.
+Since the React Web GUI is embedded inside the Go executable, building the project requires a 2-step process. (Node.js is only required for building the UI, not for running it).
 
-### Quick Start Example
+```bash
+# 1. Build the React Frontend (Optional: only if modifying UI code)
+cd web
+npm install
+npm run build
+cd ..
 
-1. **Create a new project directory:**
-   ```bash
-   mkdir my-awesome-project
-   cd my-awesome-project
-   ```
+# 2. Compile the Go Executable
+go build -o mgit main.go
+```
 
-2. **Initialize mgit:**
-   ```bash
-   mgit init
-   ```
-   *(This creates a hidden `.mgit` folder to track your project's history).*
+Once compiled, you are left with a single portable `mgit` binary!
 
-3. **Create and stage a file:**
-   ```bash
-   echo "Hello World" > readme.txt
-   mgit add readme.txt
-   ```
+---
 
-4. **Commit your changes:**
-   ```bash
-   mgit commit -m "Initial commit with readme"
-   ```
+## Command Reference
 
-5. **Check your project's status and history:**
-   ```bash
-   mgit status
-   mgit log
-   ```
+| Command | Description |
+|---|---|
+| `mgit init` | Initialize a new, empty mgit repository in the current directory. |
+| `mgit add <path>` | Add file contents to the staging area. Use `.` to add all. |
+| `mgit commit -m "<msg>"` | Record staged changes to the repository. |
+| `mgit status` | Show the working tree status (Staged, Modified, Untracked). |
+| `mgit log` | Show the commit history for the current branch. |
+| `mgit branch` | List all branches in the repository. |
+| `mgit branch <name>` | Create a new branch pointing to the current HEAD. |
+| `mgit checkout <name>` | Switch branches or restore working tree files. |
+| `mgit merge <branch>` | Merge the specified branch into the current active branch. |
+| `mgit reset <commit>` | Reset current HEAD to a specific state (`--soft`, `--mixed`, `--hard`). |
+| `mgit ui` | Start the local HTTP Web GUI server on port 8080. |
 
-## Available Features / Commands
+---
 
-`mgit` supports the core workflow of a version control system:
+## Example Usage Workflow
 
-* `mgit init`
-  Initialize a new, empty repository.
+```bash
+# Initialize a new repository
+./mgit init
 
-* `mgit add <file|directory>`
-  Add file contents to the staging area (the index). You can pass a specific file (e.g., `mgit add file.txt`) or a directory (e.g., `mgit add .` to add everything).
+# Create and stage a file
+echo "Hello mgit" > my_file.txt
+./mgit add .
 
-* `mgit commit -m "<message>"`
-  Record the staged changes to the repository with a descriptive message.
+# Create the initial commit
+./mgit commit -m "Initial commit"
 
-* `mgit status`
-  Show the working tree status. It displays files that are untracked, modified, or staged for the next commit.
+# Create a new feature branch and switch to it
+./mgit branch feature-gui
+./mgit checkout feature-gui
 
-* `mgit log`
-  Display the commit history for the current branch in reverse chronological order.
+# Make changes
+echo "Feature work" > my_file.txt
+./mgit add .
+./mgit commit -m "Added feature work"
 
-* `mgit branch`
-  List all existing branches in the repository. The currently active branch is marked with an asterisk (`*`).
+# Switch back to main and merge the feature branch
+./mgit checkout main
+./mgit merge feature-gui
 
-* `mgit branch <branch-name>`
-  Create a new branch pointing to the current commit.
-
-* `mgit checkout <branch-name|commit-hash>`
-  Switch branches or restore working tree files. This will update your files to match the exact state they were in on that branch or commit.
-
-* `mgit merge <branch-name>`
-  Join two or more development histories together. It supports fast-forward merges, up-to-date checks, and 3-way merges (aborting if conflicts arise).
+# Don't want to use the CLI? Launch the visual UI!
+./mgit ui
+```
