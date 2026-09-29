@@ -61,8 +61,19 @@ func ListBranches(repoRoot string) ([]string, error) {
 	return branches, nil
 }
 
+// IsValidRefName checks if a reference name (branch or commit) is safe and valid.
+func IsValidRefName(name string) bool {
+	if name == "" || strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
+		return false
+	}
+	return true
+}
+
 // CreateBranch creates a new branch pointing to a specific commit.
 func CreateBranch(repoRoot, branchName, commitHash string) error {
+	if !IsValidRefName(branchName) {
+		return fmt.Errorf("invalid branch name: %s", branchName)
+	}
 	branchPath := filepath.Join(repoRoot, MgitDir, "refs", "heads", branchName)
 	if utils.Exists(branchPath) {
 		return fmt.Errorf("branch '%s' already exists", branchName)

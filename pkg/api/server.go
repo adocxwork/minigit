@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	"mgit/pkg/core"
-	"mgit/pkg/utils"
 )
 
 // UIAssets holds the embedded frontend files
@@ -142,8 +141,6 @@ func (a *API) handleBranch(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		branches := []string{}
 		branchDir := filepath.Join(a.RepoRoot, core.MgitDir, "refs", "heads")
-		
-		utils.Exists(branchDir) // ensure it's loaded
 		
 		err := filepath.Walk(branchDir, func(path string, info fs.FileInfo, err error) error {
 			if err != nil || info.IsDir() {

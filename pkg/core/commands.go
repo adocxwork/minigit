@@ -34,6 +34,12 @@ func Add(repoRoot, path string) error {
 		if err != nil {
 			return err
 		}
+		if strings.HasPrefix(relToRoot, "..") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return fmt.Errorf("path %s is outside repository", p)
+		}
 		if relToRoot == MgitDir || strings.HasPrefix(relToRoot, MgitDir+string(filepath.Separator)) {
 			return filepath.SkipDir
 		}
@@ -185,8 +191,28 @@ func restoreFiles(repoRoot, oldCommitHash, newCommitHash string) error {
 	return WriteIndex(repoRoot, idx)
 }
 
+// EnsureCleanWorkspace checks if the working directory is clean (no staged or modified files).
+func EnsureCleanWorkspace(repoRoot string) error {
+	staged, modified, _, err := GetStatus(repoRoot)
+	if err != nil {
+		return err
+	}
+	if len(staged) > 0 || len(modified) > 0 {
+		return fmt.Errorf("working tree is not clean; please commit your changes before proceeding")
+	}
+	return nil
+}
+
 // Checkout switches to a branch or commit, updating the working directory.
 func Checkout(repoRoot, target string) error {
+	if !IsValidRefName(target) {
+		return fmt.Errorf("invalid reference name: %s", target)
+	}
+
+	if err := EnsureCleanWorkspace(repoRoot); err != nil {
+		return err
+	}
+
 	// First, determine if target is a branch or a commit hash
 	commitHash := target
 	isBranch := false
@@ -428,6 +454,14 @@ func findCommonAncestor(repoRoot, hash1, hash2 string) (string, error) {
 
 // Merge merges a target branch into the current branch.
 func Merge(repoRoot, targetBranch string) error {
+	if !IsValidRefName(targetBranch) {
+		return fmt.Errorf("invalid reference name: %s", targetBranch)
+	}
+
+	if err := EnsureCleanWorkspace(repoRoot); err != nil {
+		return err
+	}
+
 	headHash, err := GetHEADCommit(repoRoot)
 	if err != nil {
 		return err
@@ -597,6 +631,9 @@ func Merge(repoRoot, targetBranch string) error {
 
 // Reset moves the current branch pointer and optionally updates the working tree and index.
 func Reset(repoRoot, mode, target string) error {
+	if !IsValidRefName(target) {
+		return fmt.Errorf("invalid reference name: %s", target)
+	}
 	targetHash := target
 	if utils.Exists(filepath.Join(repoRoot, MgitDir, "refs", "heads", target)) {
 		targetHash, _ = GetBranchCommit(repoRoot, target)

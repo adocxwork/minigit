@@ -1,61 +1,76 @@
-# mgit - Detailed Project Documentation
+# mgit - Technical Architecture & Documentation
 
-## What is a Version Control System (VCS)?
-Imagine you are writing a very long essay or building a big project. Sometimes, you make a mistake and want to go back to how the project looked yesterday. Instead of manually saving copies of your project folder (like `project_final`, `project_final_2`, `project_real_final`), a Version Control System (VCS) does this for you automatically. It saves snapshots of your work so you can safely try new things, see what changed, and easily go back in time if something breaks.
+This document provides an in-depth look at the internal architecture, algorithms, and design decisions behind `mgit`. It is intended for developers and engineers who want to understand how a Version Control System operates from first principles.
 
-**mgit** is a miniature, educational version of a Version Control System. It is built to help users understand exactly how tools like Git work behind the scenes.
+## 1. System Architecture
 
----
+At its core, `mgit` operates by managing a hidden directory (`.mgit/`) at the root of the initialized project. This folder acts as the local database for the repository.
 
-## 1. How the Core Works
+```mermaid
+flowchart TD
+    WD[Working Directory] <-->|mgit add| Index(Index / Staging Area)
+    Index <-->|mgit commit| ObjStore[(Object Store\n.mgit/objects/)]
+    ObjStore <--> Refs(References\n.mgit/refs/)
+    Refs <--> HEAD(HEAD Pointer)
+    HEAD <-->|mgit checkout| WD
+```
 
-When you start using `mgit`, it needs a place to store all your history and saved files.
+### Content-Addressable Storage
+All file contents and commit snapshots are stored in the `.mgit/objects/` directory. `mgit` uses **SHA-1 hashing** to uniquely identify data, ensuring data integrity and deduplication.
+*   **Blobs**: When a file is staged (`mgit add`), its content is hashed. The hash becomes the filename in the `objects/` directory, and the content is the file's payload.
+*   **Commits**: A commit object is a JSON representation containing the author's message, timestamp, a map of all files (with their respective blob hashes at that point in time), and an array of parent commit hashes.
 
-### The Hidden `.mgit` Folder
-When you run the `init` command, the project creates a hidden folder named `.mgit`. This folder acts as the "brain" or the database of your project. If you delete this folder, all your history is gone, but your actual current files remain safe.
+### The Index (Staging Area)
+The index acts as the crucial middle-ground between the working directory and the permanent commit history. It is serialized and stored in `.mgit/index`.
+*   It operates as a Key-Value map: `filepath -> blob_hash`.
+*   `mgit add` writes to the index.
+*   `mgit commit` packages the current state of the index into a new Commit Object.
 
-### Saving Files (The Object Store)
-When you tell `mgit` to track a file (using the `add` command), it does something very clever:
-1. It reads the contents of your file.
-2. It generates a unique ID for that content using a math algorithm called SHA-1 hashing.
-3. It saves a copy of your file inside the `.mgit/objects/` folder, using that unique ID as the filename.
-By doing this, `mgit` ensures that it never saves duplicate copies of the exact same file, saving space.
-
-### The Staging Area (The Index)
-The staging area is like a shopping cart. Before you permanently save a snapshot of your project, you put the files you modified into the staging area (using `add`). This way, you can choose exactly which files should be included in your next save, and which ones should be left out for later.
-
-### Snapshots (Commits)
-A "Commit" is a permanent snapshot of your project. When you run the `commit` command, `mgit` takes everything in your staging area and packages it together with:
-* Your name and message (e.g., "Added login page").
-* The exact date and time.
-* A link to the previous commit (so they form a chain of history).
-
----
-
-## 2. Navigating History
-
-### Branches
-In a project, you might want to try a new crazy idea without ruining the main project. This is what Branches are for. In `mgit`, a branch is literally just a tiny text file that contains the unique ID of your latest commit. 
-When you create a new branch, you are just creating a new text file. You can then switch back and forth between branches (using `checkout`), and `mgit` will magically change the files in your folder to match that branch's history.
-
-### Merging
-When you are done with your crazy idea on a separate branch, you will want to combine it back into the main project. This is called Merging.
-`mgit` looks at the history of both branches. If the files can be safely combined, it does it automatically. If you changed the exact same line of code in both branches differently, `mgit` will stop and warn you. This is called a **Merge Conflict**. It will ask you to manually choose which line of code to keep before finalizing the merge.
-
-### Undo Mistakes (Reset)
-If you made a terrible mistake, you can use the `reset` command. This tells `mgit` to forcefully move your project back in time to an older commit. 
-* A **Soft** reset just moves the history pointer, keeping your files safe.
-* A **Hard** reset moves the history pointer and actively erases any new files you were working on to perfectly match the old history.
+### References (Refs) & HEAD
+References are lightweight pointers to commit hashes.
+*   **Branches**: Stored in `.mgit/refs/heads/`. A branch is a simple text file containing the SHA-1 hash of the latest commit on that branch.
+*   **HEAD**: Stored at `.mgit/HEAD`. It points to the currently checked-out branch (e.g., `ref: refs/heads/main`) or directly to a commit hash in the case of a "detached HEAD".
 
 ---
 
-## 3. The Graphical User Interface (GUI)
+## 2. Advanced Subsystems
 
-While `mgit` works perfectly well in the command-line terminal, we also built a visual web interface to make it easier to use. 
+### Reset Mechanics
+The `mgit reset` command allows for history manipulation and rollback across three distinct operational layers. It leverages a rigorous security check (`IsValidRefName`) to prevent directory traversal attacks.
+1.  **Soft Reset (`--soft`)**: Updates the branch reference (`HEAD`) to point to the target commit. The index (staging area) and working directory remain completely untouched.
+2.  **Mixed Reset (`--mixed` / default)**: Updates the branch reference *and* rewrites the index to match the tree of the target commit. The working directory is left alone.
+3.  **Hard Reset (`--hard`)**: Updates the branch reference, rewrites the index, *and* violently overwrites the working directory to precisely match the target commit, discarding any uncommitted local changes.
 
-When you run the command `mgit ui`, a local web server starts, and you can open a web browser to see your project.
-* **Visual File List**: You can see exactly which files have been modified and click a button to stage them.
-* **History Table**: You can read all your past commits in a neat table.
-* **Interactive Buttons**: You can click buttons to create branches, merge code, or reset history instead of typing long commands.
+### 3-Way Merge Algorithm
+The `mgit merge` functionality replicates true version control merging by employing a deterministic 3-way merge algorithm.
 
-The entire web interface is built using modern web technologies (React) and is embedded directly inside the `mgit` program, making it very fast and easy to run on any computer.
+1.  **Common Ancestor Resolution**: When merging `Branch B` into `Branch A`, `mgit` traverses the directed acyclic graph (DAG) of parent history using Breadth-First Search (BFS) to find the most recent common commit (the Ancestor). 
+2.  **Conflict Detection**: `mgit` compares the file hashes of `HEAD`, `Target`, and the `Ancestor`:
+    *   **Fast-Forward**: If `HEAD` is the ancestor, the merge simply moves the `HEAD` pointer forward to the target commit.
+    *   **Clean 3-Way Merge**: If a file was changed in `Target` but not in `HEAD` (relative to the Ancestor), the `Target` version is automatically accepted.
+    *   **Merge Conflicts**: If a file was modified differently in *both* `HEAD` and `Target`, `mgit` detects a conflict.
+3.  **Conflict Resolution State**:
+    *   The merge process halts.
+    *   The conflicting file is rewritten in the working directory, injected with standard Git conflict markers (`<<<<<<< HEAD`, `=======`, `>>>>>>>`).
+    *   The target branch hash is saved to `.mgit/MERGE_HEAD`.
+    *   Upon manual resolution by the user (`mgit add` and `mgit commit`), the commit subsystem detects `MERGE_HEAD` and automatically generates a true **dual-parent merge commit**.
+
+### Workspace Safety
+To prevent accidental data loss, commands that manipulate the working directory (such as `checkout` and `merge`) implement strict safeguards. `EnsureCleanWorkspace` actively checks the index and working tree, halting the operation if uncommitted changes are detected.
+
+---
+
+## 3. Embedded Web UI Architecture
+
+`mgit` features a built-in HTTP server (`mgit ui`) that hosts a local Graphical User Interface for managing the repository visually.
+
+### The `//go:embed` Directive
+Instead of requiring users to download a separate web application, the compiled React bundle (`web/dist/`) is injected directly into the `mgit` Go executable at compile time using Go's native `//go:embed` directive.
+*   This makes the `mgit` binary entirely self-contained and portable. No external assets are loaded at runtime.
+*   The Go backend utilizes standard HTTP multiplexers to serve the embedded static files, while simultaneously providing dynamic API endpoints (`/api/status`, `/api/commit`, etc.) that execute core `mgit` operations.
+
+### Frontend Engineering
+The frontend is built using **React, Vite, and TypeScript**, completely decoupling the UI rendering from the core version control logic.
+*   **Reactive Polling**: The UI utilizes a background polling interval (`setInterval`) to fetch the repository status every 3 seconds. This allows the GUI to instantly and automatically reflect changes made via the CLI or external editors, completely eliminating the need for manual page refreshes.
+*   **Custom Component System**: Moving away from native browser pop-ups, the application utilizes a bespoke component architecture (e.g., custom Modals for destructive actions, Toast context providers for non-intrusive notifications).
+*   **Keyboard Shortcuts**: Advanced user experience flows, such as pressing `Cmd/Ctrl + Enter` to commit or `Enter` to seamlessly create branches.

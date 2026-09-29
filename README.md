@@ -1,94 +1,74 @@
-# mgit - The Miniature Version Control System
+# mgit
 
-**mgit** is a lightweight, simplified version control system built purely in Go (Golang). Designed as an educational and functional alternative to Git, it implements core version control concepts from scratch—including content-addressable storage, branching, automated 3-way merges, full merge conflict resolution, and a built-in Web GUI!
+<p align="center">
+  <strong>A miniature, educational Version Control System built from scratch in Go and React.</strong>
+</p>
 
----
+## Overview
 
-## Key Features
+`mgit` is a lightweight, fully functional version control system designed to demonstrate the core architectural concepts behind tools like Git. It features a complete command-line interface (CLI) and an integrated, reactive Web GUI embedded directly into the compiled Go binary. 
+
+This project is built for educational purposes to showcase how content-addressable storage, tree-based histories, and 3-way merge algorithms operate under the hood.
+
+## Features
 
 ### 1. Core Version Control
-*   **Initialization**: Run `mgit init` to create a `.mgit` repository.
-*   **Staging**: Run `mgit add <file>` or `mgit add .` to stage files to the index.
-*   **Committing**: Run `mgit commit -m "msg"` to record snapshots permanently.
-*   **History & Status**: Check the state of your working tree with `mgit status` and view your commit timeline with `mgit log`.
+*   **Content-Addressable Storage**: Files are securely hashed (SHA-1) and stored as immutable blobs to prevent duplication.
+*   **Staging Area (Index)**: Granular control over which modifications are included in the next snapshot.
+*   **Committing**: Permanent, timestamped snapshots of the repository state linking back to their parent commits to form a directed acyclic graph (DAG).
+*   **History & Status**: Real-time diffing between the working directory, index, and HEAD commit to accurately report staged, modified, and untracked files.
 
-### 2. Branching, Merging & History Rewriting
-*   **Branches**: Create and manage isolated streams of work using `mgit branch` and `mgit checkout`.
-*   **Resetting**: Undo commits and changes using `mgit reset [--soft | --mixed | --hard] <commit>`.
-*   **Intelligent 3-Way Merge**: Running `mgit merge <branch>` automatically finds the common ancestor and merges changes.
-*   **Merge Conflict Resolution**: Just like real Git, if a merge conflicts, `mgit` halts, generates standard conflict markers (`<<<<<<< HEAD`, `=======`, `>>>>>>>`), and locks the repository into a `MERGE_HEAD` state. You can manually resolve the files, stage them, and commit to generate a true multi-parent merge commit!
+### 2. Branching & History Rewriting
+*   **Branches**: Lightweight pointers for creating isolated streams of development (`mgit branch`, `mgit checkout`).
+*   **Intelligent 3-Way Merge**: Running `mgit merge <branch>` automatically finds the common ancestor and attempts a clean 3-way merge.
+*   **Merge Conflict Resolution**: If a conflict occurs, `mgit` halts, generates standard conflict markers (`<<<<<<< HEAD`, `=======`, `>>>>>>>`), and locks the repository into a `MERGE_HEAD` state for manual resolution.
+*   **Reset Subsystem**: Undo mistakes and manipulate history using `mgit reset [--soft | --mixed | --hard] <commit>`.
+*   **Workspace Protection**: Destructive commands (like checkout and merge) strictly verify the working directory is clean to prevent accidental data loss.
 
-### 3. Integrated Web GUI (IDE-Style & Reactive)
-*   **Zero Dependencies**: Run `mgit ui` to instantly launch a fully featured Web GUI.
-*   **Reactive Polling**: The UI updates automatically via background polling. Changes you make in your CLI or editor appear in the GUI instantly without manual refreshes!
-*   **Custom Notifications**: All destructive actions (like Hard Resets) are protected by in-app Modals, and alerts are handled by sleek Toast notifications.
-*   **Built-in React**: The modular React frontend is compiled and **embedded** directly inside the Go binary.
+### 3. Integrated Web GUI
+*   **Zero Dependencies**: Run `mgit ui` to instantly launch a fully featured Web GUI on localhost:8080.
+*   **Built-in React**: The React frontend (built with Vite and TypeScript) is compiled and **embedded** directly inside the Go binary using the `//go:embed` directive.
+*   **Reactive Polling**: The UI updates automatically via background polling. Changes made via the CLI or external editors reflect in the GUI instantly without manual refreshes.
+*   **Professional IDE Interface**: A sleek, dark-themed, 2-column layout heavily inspired by modern IDEs, featuring custom modals, toast notifications, and keyboard shortcuts.
 
----
+## Installation & Build
 
-## How to Setup & Build
+### Prerequisites
+*   [Go](https://golang.org/doc/install) (1.16+)
+*   [Node.js](https://nodejs.org/) and `npm` (for building the frontend)
 
-Since the React Web GUI is embedded inside the Go executable, building the project requires a 2-step process. (Node.js is only required for building the UI, not for running it).
+### Build Instructions
 
-```bash
-# 1. Build the React Frontend (Optional: only if modifying UI code)
-cd web
-npm install
-npm run build
-cd ..
+1.  **Clone the repository** (if applicable) and navigate to the root directory.
+2.  **Build the Frontend**:
+    ```bash
+    cd web
+    npm install
+    npm run build
+    cd ..
+    ```
+3.  **Build the Go Binary**:
+    ```bash
+    go build -o mgit main.go
+    ```
 
-# 2. Compile the Go Executable
-go build -o mgit main.go
-```
-
-Once compiled, you are left with a single portable `mgit` binary!
-
----
+You will now have a standalone `mgit` executable in your directory.
 
 ## Command Reference
 
 | Command | Description |
-|---|---|
-| `mgit init` | Initialize a new, empty mgit repository in the current directory. |
-| `mgit add <path>` | Add file contents to the staging area. Use `.` to add all. |
-| `mgit commit -m "<msg>"` | Record staged changes to the repository. |
-| `mgit status` | Show the working tree status (Staged, Modified, Untracked). |
-| `mgit log` | Show the commit history for the current branch. |
-| `mgit branch` | List all branches in the repository. |
+| :--- | :--- |
+| `mgit init` | Initialize a new, empty repository in the current directory. |
+| `mgit add <path>` | Add file contents to the staging area (index). |
+| `mgit commit -m "msg"` | Record changes to the repository history. |
+| `mgit status` | Show the working tree status (staged, modified, untracked). |
+| `mgit log` | Display the commit history of the current branch. |
 | `mgit branch <name>` | Create a new branch pointing to the current HEAD. |
 | `mgit checkout <name>` | Switch branches or restore working tree files. |
 | `mgit merge <branch>` | Merge the specified branch into the current active branch. |
 | `mgit reset <commit>` | Reset current HEAD to a specific state (`--soft`, `--mixed`, `--hard`). |
 | `mgit ui` | Start the local HTTP Web GUI server on port 8080. |
 
----
+## Technical Documentation
 
-## Example Usage Workflow
-
-```bash
-# Initialize a new repository
-./mgit init
-
-# Create and stage a file
-echo "Hello mgit" > my_file.txt
-./mgit add .
-
-# Create the initial commit
-./mgit commit -m "Initial commit"
-
-# Create a new feature branch and switch to it
-./mgit branch feature-gui
-./mgit checkout feature-gui
-
-# Make changes
-echo "Feature work" > my_file.txt
-./mgit add .
-./mgit commit -m "Added feature work"
-
-# Switch back to main and merge the feature branch
-./mgit checkout main
-./mgit merge feature-gui
-
-# Don't want to use the CLI? Launch the visual UI!
-./mgit ui
-```
+For a deep dive into the internal architecture, algorithms, and data structures used in `mgit`, please refer to the [Project Documentation](PROJECT_DOCUMENTATION.md).
