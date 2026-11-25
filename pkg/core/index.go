@@ -2,44 +2,40 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
-	"path/filepath"
-
-	"mgit/pkg/utils"
 )
 
 type Index struct {
-	Entries map[string]string `json:"entries"` // filepath relative to repo root -> blob hash
+	Entries map[string]string `json:"entries"`
 }
 
-// ReadIndex reads the staging area.
 func ReadIndex(repoRoot string) (*Index, error) {
-	indexPath := filepath.Join(repoRoot, MgitDir, "index")
-	idx := &Index{Entries: make(map[string]string)}
-
-	if !utils.Exists(indexPath) {
+	idx := &Index{Entries: map[string]string{}}
+	data, err := readMetadata(repoRoot, "index")
+	if errors.Is(err, os.ErrNotExist) {
 		return idx, nil
 	}
-
-	data, err := os.ReadFile(indexPath)
 	if err != nil {
 		return nil, err
 	}
-
 	if err := json.Unmarshal(data, idx); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read index: %w", err)
 	}
-
-	return idx, nil
+	if idx.Entries == nil {
+		idx.Entries = map[string]string{}
+	}
+	return idx, validateSnapshot(idx.Entries)
 }
 
-// WriteIndex saves the staging area.
 func WriteIndex(repoRoot string, idx *Index) error {
-	indexPath := filepath.Join(repoRoot, MgitDir, "index")
+	if err := validateSnapshot(idx.Entries); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(idx, "", "  ")
 	if err != nil {
 		return err
 	}
-
-	return os.WriteFile(indexPath, data, 0644)
+	return writeMetadata(repoRoot, "index", data)
 }

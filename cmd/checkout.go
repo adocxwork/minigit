@@ -1,29 +1,17 @@
 package cmd
 
 import (
-	"fmt"
-	"os"
-
 	"github.com/spf13/cobra"
 	"mgit/pkg/core"
 )
 
 var checkoutCmd = &cobra.Command{
 	Use:   "checkout <branch|commit>",
-	Short: "Switch branches or restore working tree files",
+	Short: "Switch to a branch or commit",
 	Args:  cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		repoRoot, err := core.GetRepoPath()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "Fatal:", err)
-			os.Exit(1)
-		}
-
-		if err := core.Checkout(repoRoot, args[0]); err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-			os.Exit(1)
-		}
-	},
+	RunE: repoCommand(func(repoRoot string, args []string) error {
+		return core.Checkout(repoRoot, args[0])
+	}),
 }
 
 func init() {

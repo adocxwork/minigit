@@ -4,6 +4,8 @@ export interface StatusResponse {
   untracked: string[];
   currentBranch: string;
   headCommit: string;
+  merging: boolean;
+  conflicts: string[];
 }
 
 export interface Commit {
@@ -13,83 +15,35 @@ export interface Commit {
   parents: string[];
 }
 
-export interface BranchList {
-  branches: string[];
-  current: string;
+export interface Overview {
+  name: string;
+  status: StatusResponse;
+  branchList: { branches: string[]; current: string };
+  log: Commit[];
 }
 
-const API_BASE = '/api';
+export type ResetMode = 'soft' | 'mixed' | 'hard';
+
+async function request(path: string, body?: object): Promise<Response> {
+  const response = await fetch(`/api/${path}`, body && {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error((await response.text()).trim());
+  return response;
+}
 
 export const api = {
-  getStatus: async (): Promise<StatusResponse> => {
-    const res = await fetch(`${API_BASE}/status`);
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
-  },
-
-  addFiles: async (paths: string[]): Promise<void> => {
-    const res = await fetch(`${API_BASE}/add`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths })
-    });
-    if (!res.ok) throw new Error(await res.text());
-  },
-
-  commit: async (message: string): Promise<void> => {
-    const res = await fetch(`${API_BASE}/commit`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message })
-    });
-    if (!res.ok) throw new Error(await res.text());
-  },
-
-  getLog: async (): Promise<Commit[]> => {
-    const res = await fetch(`${API_BASE}/log`);
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
-  },
-
-  getBranches: async (): Promise<BranchList> => {
-    const res = await fetch(`${API_BASE}/branch`);
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
-  },
-
-  createBranch: async (name: string): Promise<void> => {
-    const res = await fetch(`${API_BASE}/branch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name })
-    });
-    if (!res.ok) throw new Error(await res.text());
-  },
-
-  checkout: async (target: string): Promise<void> => {
-    const res = await fetch(`${API_BASE}/checkout`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target })
-    });
-    if (!res.ok) throw new Error(await res.text());
-  },
-  
-  merge: async (targetBranch: string): Promise<void> => {
-    const res = await fetch(`${API_BASE}/merge`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetBranch })
-    });
-    if (!res.ok) throw new Error(await res.text());
-  },
-
-  reset: async (mode: string, target: string): Promise<void> => {
-    const res = await fetch(`${API_BASE}/reset`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, target })
-    });
-    if (!res.ok) throw new Error(await res.text());
-  }
+  overview: async (): Promise<Overview> => (await request('overview')).json(),
+  stage: (path: string) => request('add', { paths: [path] }),
+  commit: (message: string) => request('commit', { message }),
+  branch: (name: string) => request('branch', { name }),
+  checkout: (target: string) => request('checkout', { target }),
+  merge: (targetBranch: string) => request('merge', { targetBranch }),
+  reset: (mode: ResetMode, target: string) => request('reset', { mode, target }),
 };
+
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'The operation failed. Try again.';
+}

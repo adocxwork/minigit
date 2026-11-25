@@ -1,29 +1,45 @@
-import React from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
   title: string;
-  children: React.ReactNode;
+  children: ReactNode;
+  busy?: boolean;
 }
 
-export function Modal({ isOpen, onClose, title, children }: ModalProps) {
-  if (!isOpen) return null;
+export function Modal({ isOpen, onClose, title, children, busy }: ModalProps) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+
+  useEffect(() => {
+    const element = dialog.current;
+    if (isOpen && element && !element.open) element.showModal();
+    if (!isOpen && element?.open) element.close();
+  }, [isOpen]);
 
   return (
-    <div className="modal-overlay">
-      <div className="modal-content">
-        <div className="modal-header">
-          <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 600 }}>{title}</h3>
-          <button onClick={onClose} className="icon-btn">
-            <X size={14} />
-          </button>
-        </div>
-        <div className="modal-body">
+    <dialog
+      ref={dialog}
+      className="modal"
+      aria-labelledby={titleId}
+      onCancel={event => {
+        event.preventDefault();
+        if (!busy) onClose();
+      }}
+    >
+      {isOpen && (
+        <>
+          <div className="modal-header">
+            <h2 id={titleId}>{title}</h2>
+            <button type="button" onClick={onClose} className="icon-button" aria-label="Close dialog" disabled={busy}>
+              <X size={18} />
+            </button>
+          </div>
           {children}
-        </div>
-      </div>
-    </div>
+        </>
+      )}
+    </dialog>
   );
 }

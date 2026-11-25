@@ -1,114 +1,183 @@
 package core
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"mgit/pkg/utils"
+	"unicode"
+	"unicode/utf8"
 )
 
-// GetCurrentBranch returns the current branch name, or empty if detached HEAD.
+const branchPrefix = "ref: refs/heads/"
+
 func GetCurrentBranch(repoRoot string) (string, error) {
-	headPath := filepath.Join(repoRoot, MgitDir, "HEAD")
-	data, err := os.ReadFile(headPath)
+	data, err := readMetadata(repoRoot, "HEAD")
 	if err != nil {
 		return "", err
 	}
 	content := strings.TrimSpace(string(data))
-
-	if strings.HasPrefix(content, "ref: refs/heads/") {
-		return strings.TrimPrefix(content, "ref: refs/heads/"), nil
+	if branch, ok := strings.CutPrefix(content, branchPrefix); ok {
+		if !IsValidRefName(branch) {
+			return "", fmt.Errorf("invalid branch in HEAD: %q", branch)
+		}
+		return branch, nil
 	}
-	return "", nil // Detached HEAD
+	if !validObjectID(content) {
+		return "", fmt.Errorf("invalid HEAD: %q", content)
+	}
+	return "", nil
 }
 
-// GetBranchCommit returns the commit hash a branch points to.
 func GetBranchCommit(repoRoot, branchName string) (string, error) {
-	branchPath := filepath.Join(repoRoot, MgitDir, "refs", "heads", branchName)
-	if !utils.Exists(branchPath) {
-		return "", fmt.Errorf("branch '%s' not found", branchName)
+	if !IsValidRefName(branchName) {
+		return "", fmt.Errorf("invalid branch name: %q", branchName)
 	}
-
-	data, err := os.ReadFile(branchPath)
+	data, err := readMetadata(repoRoot, filepath.Join("refs", "heads", branchName))
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(data)), nil
+	hash := strings.TrimSpace(string(data))
+	if !validObjectID(hash) {
+		return "", fmt.Errorf("invalid commit in branch %q", branchName)
+	}
+	return hash, nil
 }
 
-// UpdateBranch updates a branch to point to a specific commit.
 func UpdateBranch(repoRoot, branchName, commitHash string) error {
-	branchPath := filepath.Join(repoRoot, MgitDir, "refs", "heads", branchName)
-	return os.WriteFile(branchPath, []byte(commitHash+"\n"), 0644)
+	if !IsValidRefName(branchName) || !validObjectID(commitHash) {
+		return fmt.Errorf("invalid branch name or commit ID")
+	}
+	return writeMetadata(repoRoot, filepath.Join("refs", "heads", branchName), []byte(commitHash+"\n"))
 }
 
-// ListBranches returns a list of all branches.
 func ListBranches(repoRoot string) ([]string, error) {
-	headsDir := filepath.Join(repoRoot, MgitDir, "refs", "heads")
-	entries, err := os.ReadDir(headsDir)
+	meta, err := openMetadata(repoRoot)
 	if err != nil {
 		return nil, err
 	}
+	defer meta.Close()
 
-	var branches []string
+	dir := filepath.Join("refs", "heads")
+	if _, err := checkedInfo(meta, dir); err != nil {
+		return nil, err
+	}
+	entries, err := fs.ReadDir(meta.FS(), filepath.ToSlash(dir))
+	if err != nil {
+		return nil, err
+	}
+	branches := []string{}
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if entry.Type().IsRegular() && IsValidRefName(entry.Name()) {
 			branches = append(branches, entry.Name())
+		}
+	}
+	// Include the current unborn branch so the UI can display it.
+	current, err := GetCurrentBranch(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	if current != "" {
+		if _, err := GetBranchCommit(repoRoot, current); errors.Is(err, os.ErrNotExist) {
+			branches = append(branches, current)
+		} else if err != nil {
+			return nil, err
 		}
 	}
 	return branches, nil
 }
 
-// IsValidRefName checks if a reference name (branch or commit) is safe and valid.
+// IsValidRefName validates a single branch name or full commit ID.
 func IsValidRefName(name string) bool {
-	if name == "" || strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
-		return false
-	}
-	return true
+	return name != "" && utf8.ValidString(name) && filepath.IsLocal(name) &&
+		!strings.HasPrefix(name, ".") && !strings.HasSuffix(name, ".") &&
+		!strings.HasSuffix(name, ".lock") && !strings.Contains(name, "..") &&
+		!strings.ContainsAny(name, "/\\~^:?*[]<>|\"") &&
+		strings.IndexFunc(name, unicode.IsSpace) == -1 &&
+		strings.IndexFunc(name, unicode.IsControl) == -1
 }
 
-// CreateBranch creates a new branch pointing to a specific commit.
 func CreateBranch(repoRoot, branchName, commitHash string) error {
 	if !IsValidRefName(branchName) {
-		return fmt.Errorf("invalid branch name: %s", branchName)
+		return fmt.Errorf("invalid branch name: %q", branchName)
 	}
-	branchPath := filepath.Join(repoRoot, MgitDir, "refs", "heads", branchName)
-	if utils.Exists(branchPath) {
-		return fmt.Errorf("branch '%s' already exists", branchName)
+	if commitHash == "" {
+		return fmt.Errorf("create a commit before creating a branch")
 	}
-	return os.WriteFile(branchPath, []byte(commitHash+"\n"), 0644)
+	if _, err := ReadCommit(repoRoot, commitHash); err != nil {
+		return err
+	}
+	_, err := GetBranchCommit(repoRoot, branchName)
+	if !errors.Is(err, os.ErrNotExist) {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("branch %q already exists", branchName)
+	}
+	return UpdateBranch(repoRoot, branchName, commitHash)
 }
 
-// UpdateHEAD updates the HEAD file to point to a new reference (branch).
 func UpdateHEAD(repoRoot, branchName string) error {
-	headPath := filepath.Join(repoRoot, MgitDir, "HEAD")
-	content := fmt.Sprintf("ref: refs/heads/%s\n", branchName)
-	return os.WriteFile(headPath, []byte(content), 0644)
+	if !IsValidRefName(branchName) {
+		return fmt.Errorf("invalid branch name: %q", branchName)
+	}
+	return writeMetadata(repoRoot, "HEAD", []byte(branchPrefix+branchName+"\n"))
 }
 
-// GetHEADCommit returns the current commit hash HEAD points to.
 func GetHEADCommit(repoRoot string) (string, error) {
 	branch, err := GetCurrentBranch(repoRoot)
 	if err != nil {
 		return "", err
 	}
-
-	if branch != "" {
-		commit, err := GetBranchCommit(repoRoot, branch)
-		if err != nil {
-			// Initial commit scenario: branch exists in HEAD but file doesn't exist yet
-			return "", nil
+	if branch == "" {
+		data, err := readMetadata(repoRoot, "HEAD")
+		return strings.TrimSpace(string(data)), err
+	}
+	hash, err := GetBranchCommit(repoRoot, branch)
+	if errors.Is(err, os.ErrNotExist) {
+		// Only a missing branch file in an intact refs directory is an unborn branch.
+		meta, openErr := openMetadata(repoRoot)
+		if openErr != nil {
+			return "", openErr
 		}
-		return commit, nil
+		defer meta.Close()
+		info, dirErr := checkedInfo(meta, filepath.Join("refs", "heads"))
+		if dirErr != nil {
+			return "", dirErr
+		}
+		if !info.IsDir() {
+			return "", fmt.Errorf("invalid branch directory")
+		}
+		return "", nil
 	}
+	return hash, err
+}
 
-	// Detached HEAD scenario (HEAD contains just the hash)
-	headPath := filepath.Join(repoRoot, MgitDir, "HEAD")
-	data, err := os.ReadFile(headPath)
+func moveHEAD(repoRoot, hash string) error {
+	branch, err := GetCurrentBranch(repoRoot)
 	if err != nil {
-		return "", err
+		return err
 	}
-	return strings.TrimSpace(string(data)), nil
+	if branch != "" {
+		return UpdateBranch(repoRoot, branch, hash)
+	}
+	return writeMetadata(repoRoot, "HEAD", []byte(hash+"\n"))
+}
+
+func resolveCommit(repoRoot, target string) (*Commit, bool, error) {
+	if !IsValidRefName(target) {
+		return nil, false, fmt.Errorf("invalid reference name: %q", target)
+	}
+	hash, err := GetBranchCommit(repoRoot, target)
+	if err == nil {
+		commit, err := ReadCommit(repoRoot, hash)
+		return commit, true, err
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, false, err
+	}
+	commit, err := ReadCommit(repoRoot, target)
+	return commit, false, err
 }

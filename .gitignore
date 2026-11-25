@@ -1,0 +1,25 @@
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Local MiniGit repositories and Go build output
+.mgit/
+/mgit
+/mgit.exe
+*.test
+coverage.out
+
+# Frontend dependencies and generated assets
+/web/node_modules/
+/web/dist/
+/web/dist-ssr/
+*.tsbuildinfo
+*.log
+
+# Local environment configuration
+.env
+.env.*
+!.env.example
